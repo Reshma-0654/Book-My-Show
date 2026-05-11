@@ -9,14 +9,8 @@ pipeline {
 
         stage('Git Checkout') {
             steps {
-                checkout scmGit(
-                    branches: [[name: '*/main']],
-                    extensions: [],
-                    userRemoteConfigs: [[
-                        credentialsId: 'Git_creds',
-                        url: 'https://github.com/Reshma-0654/Book-My-Show.git'
-                    ]]
-                )
+                git branch: 'main',
+                url: 'https://github.com/Reshma-0654/Book-My-Show.git'
             }
         }
 
@@ -32,13 +26,18 @@ pipeline {
 
                     sh '''
                     mvn sonar:sonar \
-                    -Dsonar.projectKey=bookmyshow \
-                    -Dsonar.host.url=http://172.31.40.13:9000 \
-                    -Dsonar.login=$SONAR_AUTH_TOKEN
+                    -Dsonar.projectKey=bookmyshow
                     '''
                 }
             }
         }
 
+        stage('Quality Gate') {
+            steps {
+                timeout(time: 5, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
     }
 }
