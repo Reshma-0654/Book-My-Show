@@ -26,7 +26,18 @@ pipeline {
             }
         }
 
-      
+        stage('SonarQube Analysis') {
+            steps {
+                withSonarQubeEnv('sonar-server') {
+
+                    sh '''
+                    mvn sonar:sonar \
+                    -Dsonar.projectKey=bookmyshow \
+                    -Dsonar.host.url=http://172.31.40.13:9000 \
+                    -Dsonar.login=$SONAR_AUTH_TOKEN
+                    '''
+                }
+            }
         }
 
     }
