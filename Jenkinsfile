@@ -1,4 +1,5 @@
 pipeline {
+
     agent any
 
     tools {
@@ -7,10 +8,14 @@ pipeline {
     }
 
     environment {
-        SCANNER_HOME   = tool 'sonar-scanner'
-        DOCKER_IMAGE   = 'reshma0654/bookmyshow:latest'
-        AWS_REGION     = 'us-east-1'
-        EKS_CLUSTER    = 'kastro-eks'
+
+        SCANNER_HOME = tool 'sonar-scanner'
+
+        DOCKER_IMAGE = 'reshma0654/bookmyshow:latest'
+
+        AWS_REGION = 'us-east-1'
+
+        EKS_CLUSTER = 'kastro-eks'
     }
 
     stages {
@@ -22,9 +27,13 @@ pipeline {
         }
 
         stage('Checkout Code') {
+
             steps {
+
                 checkout scmGit(
+
                     branches: [[name: '*/main']],
+
                     userRemoteConfigs: [[
                         credentialsId: 'Git_creds',
                         url: 'https://github.com/Reshma-0654/Book-My-Show.git'
@@ -33,47 +42,67 @@ pipeline {
             }
         }
 
-        stage('SonarQube Analysis') {
-            steps {
-                withSonarQubeEnv('sonar-server') {
-
-                    sh """
-                    ${SCANNER_HOME}/bin/sonar-scanner \
-                    -Dsonar.projectName=BookMyShow \
-                    -Dsonar.projectKey=BookMyShow
-                    """
-                }
-            }
-        }
-
-        stage('Quality Gate') {
-            steps {
-                waitForQualityGate abortPipeline: false
-            }
-        }
-
         stage('Install Dependencies') {
+
             steps {
+
                 dir('bookmyshow-app') {
 
                     sh '''
-                    echo "Cleaning old dependencies..."
+                    echo "Removing old dependencies..."
 
                     rm -rf node_modules
-                    rm -f package-lock.json
+                    rm -rf build
+                    rm -rf dist
+
+                    echo "Cleaning npm cache..."
 
                     npm cache clean --force
 
                     echo "Installing dependencies..."
 
-                    npm install --legacy-peer-deps
+                    npm ci --legacy-peer-deps
                     '''
                 }
             }
         }
 
-        stage('Trivy File System Scan') {
+        stage('SonarQube Analysis') {
+
             steps {
+
+                dir('bookmyshow-app') {
+
+                    withSonarQubeEnv('sonar-server') {
+
+                        sh """
+                        ${SCANNER_HOME}/bin/sonar-scanner \
+                        -Dsonar.projectName=BookMyShow \
+                        -Dsonar.projectKey=BookMyShow \
+                        -Dsonar.sources=src \
+                        -Dsonar.sourceEncoding=UTF-8 \
+                        -Dsonar.exclusions=node_modules/**,build/**,dist/**,coverage/**,.git/**
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Quality Gate') {
+
+            steps {
+
+                timeout(time: 5, unit: 'MINUTES') {
+
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+
+        stage('Trivy File System Scan') {
+
+            steps {
+
                 sh '''
                 echo "Running Trivy File Scan..."
 
@@ -83,11 +112,13 @@ pipeline {
         }
 
         stage('Docker Build') {
+
             steps {
+
                 sh '''
                 echo "Building Docker Image..."
 
-                docker build --no-cache \
+                docker build \
                 -t $DOCKER_IMAGE \
                 -f bookmyshow-app/Dockerfile \
                 bookmyshow-app
@@ -96,7 +127,9 @@ pipeline {
         }
 
         stage('Trivy Docker Image Scan') {
+
             steps {
+
                 sh '''
                 echo "Scanning Docker Image..."
 
@@ -106,6 +139,7 @@ pipeline {
         }
 
         stage('Docker Login & Push') {
+
             steps {
 
                 withDockerRegistry(
@@ -122,15 +156,17 @@ pipeline {
         }
 
         stage('Deploy Docker Container') {
+
             steps {
 
                 sh '''
-                echo "Removing old container..."
+                echo "Stopping old container..."
 
                 docker stop bookmyshow || true
+
                 docker rm bookmyshow || true
 
-                echo "Running new container..."
+                echo "Starting new container..."
 
                 docker run -d \
                 --name bookmyshow \
@@ -138,7 +174,7 @@ pipeline {
                 -p 3000:3000 \
                 $DOCKER_IMAGE
 
-                sleep 10
+                sleep 15
 
                 echo "Running Containers:"
                 docker ps -a
@@ -150,6 +186,7 @@ pipeline {
         }
 
         stage('Configure AWS CLI') {
+
             steps {
 
                 sh '''
@@ -165,6 +202,7 @@ pipeline {
         }
 
         stage('Connect to EKS Cluster') {
+
             steps {
 
                 sh '''
@@ -174,7 +212,7 @@ pipeline {
                 --region $AWS_REGION \
                 --name $EKS_CLUSTER
 
-                echo "Checking Nodes..."
+                echo "Cluster Nodes..."
 
                 kubectl get nodes
                 '''
@@ -182,23 +220,26 @@ pipeline {
         }
 
         stage('Deploy to Kubernetes') {
+
             steps {
 
                 sh '''
                 echo "Deploying to Kubernetes..."
 
                 kubectl apply -f deployment.yml
+
                 kubectl apply -f service.yml
 
-                echo "Pods:"
+                echo "Pods..."
+
                 kubectl get pods
 
-                echo "Services:"
+                echo "Services..."
+
                 kubectl get svc
                 '''
             }
         }
-
     }
 
     post {
@@ -208,17 +249,27 @@ pipeline {
             sh 'docker system prune -f || true'
 
             emailext(
+
                 attachLog: true,
+
                 subject: "${currentBuild.currentResult}: Job ${env.JOB_NAME}",
+
                 body: """
+
                 <h2>Jenkins Build Notification</h2>
 
                 <p><b>Project:</b> ${env.JOB_NAME}</p>
+
                 <p><b>Build Number:</b> ${env.BUILD_NUMBER}</p>
+
                 <p><b>Status:</b> ${currentBuild.currentResult}</p>
+
                 <p><b>Build URL:</b> ${env.BUILD_URL}</p>
+
                 """,
+
                 to: 'yourmail@gmail.com',
+
                 attachmentsPattern: 'trivyfs.txt,trivyimage.txt'
             )
         }
