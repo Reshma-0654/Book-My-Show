@@ -21,14 +21,14 @@ pipeline {
             }
         }
 
-        stage('Checkout from SCM') {
+        stage('Checkout from Git') {
             steps {
                 checkout scmGit(
                     branches: [[name: '*/main']],
                     extensions: [],
                     userRemoteConfigs: [[
                         credentialsId: 'github_creds',
-                        url: 'https://github.com/KastroVKiran/Book-My-Show.git'
+                        url: 'https://github.com/Reshma-0654/Book-My-Show.git'
                     ]]
                 )
                 sh 'ls -la'
