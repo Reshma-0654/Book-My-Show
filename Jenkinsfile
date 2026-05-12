@@ -23,14 +23,16 @@ pipeline {
 
         stage('Checkout from Git') {
             steps {
-                checkout scmGit(
+                checkout([
+                    $class: 'GitSCM',
                     branches: [[name: '*/main']],
                     extensions: [],
                     userRemoteConfigs: [[
                         credentialsId: 'github_creds',
                         url: 'https://github.com/Reshma-0654/Book-My-Show.git'
                     ]]
-                )
+                ])
+
                 sh 'ls -la'
             }
         }
@@ -41,7 +43,8 @@ pipeline {
                     sh """
                     $SCANNER_HOME/bin/sonar-scanner \
                     -Dsonar.projectName=BMS \
-                    -Dsonar.projectKey=BMS
+                    -Dsonar.projectKey=BMS \
+                    -Dsonar.sources=.
                     """
                 }
             }
@@ -50,7 +53,7 @@ pipeline {
         stage('Quality Gate') {
             steps {
                 script {
-                    waitForQualityGate abortPipeline: true, credentialsId: 'sonar-token'
+                    waitForQualityGate abortPipeline: true
                 }
             }
         }
