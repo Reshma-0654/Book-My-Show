@@ -23,12 +23,7 @@ pipeline {
 
         stage('Checkout Code') {
             steps {
-                git branch: 'main', url: 'https://github.com/Reshma-0654/Book-My-Show.git'
-
-                sh '''
-                echo "Listing files..."
-                ls -la
-                '''
+               checkout scmGit(branches: [[name: '*/main']], extensions: [], userRemoteConfigs: [[credentialsId: 'Git_creds', url: 'https://github.com/Reshma-0654/Book-My-Show.git']]) 
             }
         }
 
