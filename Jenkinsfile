@@ -7,10 +7,10 @@ pipeline {
     }
 
     environment {
-        SCANNER_HOME = tool 'sonar-scanner'
-        DOCKER_IMAGE = 'reshma0654/bookmyshow:latest'
-        AWS_REGION = 'us-east-1'
-        EKS_CLUSTER_NAME = 'kastro-eks'
+        SCANNER_HOME   = tool 'sonar-scanner'
+        DOCKER_IMAGE   = 'reshma0654/bookmyshow:latest'
+        AWS_REGION     = 'us-east-1'
+        EKS_CLUSTER    = 'kastro-eks'
     }
 
     stages {
@@ -23,53 +23,60 @@ pipeline {
 
         stage('Checkout Code') {
             steps {
-               checkout scmGit(branches: [[name: '*/main']], extensions: [], userRemoteConfigs: [[credentialsId: 'Git_creds', url: 'https://github.com/Reshma-0654/Book-My-Show.git']]) 
+                checkout scmGit(
+                    branches: [[name: '*/main']],
+                    userRemoteConfigs: [[
+                        credentialsId: 'Git_creds',
+                        url: 'https://github.com/Reshma-0654/Book-My-Show.git'
+                    ]]
+                )
             }
         }
 
         stage('SonarQube Analysis') {
             steps {
                 withSonarQubeEnv('sonar-server') {
-                    sh '''
-                    $SCANNER_HOME/bin/sonar-scanner \
+
+                    sh """
+                    ${SCANNER_HOME}/bin/sonar-scanner \
                     -Dsonar.projectName=BookMyShow \
                     -Dsonar.projectKey=BookMyShow
-                    '''
+                    """
                 }
             }
         }
 
         stage('Quality Gate') {
             steps {
-                script {
-                    waitForQualityGate abortPipeline: false, credentialsId: 'Sonar-token'
-                }
+                waitForQualityGate abortPipeline: false
             }
         }
 
         stage('Install Dependencies') {
             steps {
-                sh '''
-                cd bookmyshow-app
+                dir('bookmyshow-app') {
 
-                echo "Checking package.json..."
+                    sh '''
+                    echo "Cleaning old dependencies..."
 
-                if [ -f package.json ]; then
-                    rm -rf node_modules package-lock.json
+                    rm -rf node_modules
+                    rm -f package-lock.json
+
+                    npm cache clean --force
 
                     echo "Installing dependencies..."
-                    npm install
-                else
-                    echo "package.json not found!"
-                    exit 1
-                fi
-                '''
+
+                    npm install --legacy-peer-deps
+                    '''
+                }
             }
         }
 
         stage('Trivy File System Scan') {
             steps {
                 sh '''
+                echo "Running Trivy File Scan..."
+
                 trivy fs . > trivyfs.txt
                 '''
             }
@@ -80,8 +87,10 @@ pipeline {
                 sh '''
                 echo "Building Docker Image..."
 
-                docker build --no-cache -t $DOCKER_IMAGE \
-                -f bookmyshow-app/Dockerfile bookmyshow-app
+                docker build --no-cache \
+                -t $DOCKER_IMAGE \
+                -f bookmyshow-app/Dockerfile \
+                bookmyshow-app
                 '''
             }
         }
@@ -98,23 +107,25 @@ pipeline {
 
         stage('Docker Login & Push') {
             steps {
-                script {
-                    withDockerRegistry(credentialsId: 'docker', toolName: 'docker') {
 
-                        sh '''
-                        echo "Pushing Docker Image..."
+                withDockerRegistry(
+                    credentialsId: 'docker'
+                ) {
 
-                        docker push $DOCKER_IMAGE
-                        '''
-                    }
+                    sh '''
+                    echo "Pushing Docker Image..."
+
+                    docker push $DOCKER_IMAGE
+                    '''
                 }
             }
         }
 
         stage('Deploy Docker Container') {
             steps {
+
                 sh '''
-                echo "Stopping old container..."
+                echo "Removing old container..."
 
                 docker stop bookmyshow || true
                 docker rm bookmyshow || true
@@ -123,17 +134,16 @@ pipeline {
 
                 docker run -d \
                 --name bookmyshow \
-                --restart=always \
+                --restart always \
                 -p 3000:3000 \
                 $DOCKER_IMAGE
 
-                echo "Checking running containers..."
+                sleep 10
 
+                echo "Running Containers:"
                 docker ps -a
 
-                echo "Container Logs..."
-
-                sleep 10
+                echo "Container Logs:"
                 docker logs bookmyshow
                 '''
             }
@@ -141,6 +151,7 @@ pipeline {
 
         stage('Configure AWS CLI') {
             steps {
+
                 sh '''
                 echo "Checking AWS CLI..."
 
@@ -155,14 +166,15 @@ pipeline {
 
         stage('Connect to EKS Cluster') {
             steps {
+
                 sh '''
                 echo "Updating kubeconfig..."
 
                 aws eks update-kubeconfig \
                 --region $AWS_REGION \
-                --name $EKS_CLUSTER_NAME
+                --name $EKS_CLUSTER
 
-                echo "Checking Kubernetes Nodes..."
+                echo "Checking Nodes..."
 
                 kubectl get nodes
                 '''
@@ -171,36 +183,39 @@ pipeline {
 
         stage('Deploy to Kubernetes') {
             steps {
+
                 sh '''
-                echo "Deploying Kubernetes Resources..."
+                echo "Deploying to Kubernetes..."
 
                 kubectl apply -f deployment.yml
                 kubectl apply -f service.yml
 
-                echo "Checking Pods..."
-
+                echo "Pods:"
                 kubectl get pods
 
-                echo "Checking Services..."
-
+                echo "Services:"
                 kubectl get svc
                 '''
             }
         }
+
     }
 
     post {
+
         always {
+
+            sh 'docker system prune -f || true'
 
             emailext(
                 attachLog: true,
-                subject: "${currentBuild.result}: Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]'",
+                subject: "${currentBuild.currentResult}: Job ${env.JOB_NAME}",
                 body: """
                 <h2>Jenkins Build Notification</h2>
 
                 <p><b>Project:</b> ${env.JOB_NAME}</p>
                 <p><b>Build Number:</b> ${env.BUILD_NUMBER}</p>
-                <p><b>Build Status:</b> ${currentBuild.result}</p>
+                <p><b>Status:</b> ${currentBuild.currentResult}</p>
                 <p><b>Build URL:</b> ${env.BUILD_URL}</p>
                 """,
                 to: 'yourmail@gmail.com',
