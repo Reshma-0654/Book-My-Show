@@ -3,12 +3,12 @@ pipeline {
 
     tools {
         jdk 'jdk17'
-        nodejs 'node18'
+        nodejs 'node23'
     }
 
     environment {
         SCANNER_HOME = tool 'sonar-scanner'
-        DOCKER_IMAGE = 'bindusravya/bms:latest'
+        DOCKER_IMAGE = 'kastrov/bms:latest'
         EKS_CLUSTER_NAME = 'kastro-eks'
         AWS_REGION = 'us-east-1'
     }
@@ -23,14 +23,17 @@ pipeline {
 
         stage('Checkout from Git') {
             steps {
-                checkout scmGit(
+                checkout([
+                    $class: 'GitSCM',
                     branches: [[name: '*/main']],
                     extensions: [],
                     userRemoteConfigs: [[
                         credentialsId: 'github_creds',
                         url: 'https://github.com/Reshma-0654/Book-My-Show.git'
                     ]]
-                )
+                ])
+
+                sh 'ls -la'
             }
         }
 
@@ -39,8 +42,9 @@ pipeline {
                 withSonarQubeEnv('sonar-server') {
                     sh """
                     $SCANNER_HOME/bin/sonar-scanner \
-                        -Dsonar.projectName=BMS \
-                        -Dsonar.projectKey=BMS
+                    -Dsonar.projectName=BMS \
+                    -Dsonar.projectKey=BMS \
+                    -Dsonar.sources=.
                     """
                 }
             }
@@ -49,7 +53,9 @@ pipeline {
         stage('Quality Gate') {
             steps {
                 script {
-                    waitForQualityGate abortPipeline: false, credentialsId: 'Sonar-token'
+                    timeout(time: 10, unit: 'MINUTES') {
+                        waitForQualityGate abortPipeline: true
+                    }
                 }
             }
         }
@@ -58,32 +64,36 @@ pipeline {
             steps {
                 sh '''
                 cd bookmyshow-app
-                rm -rf node_modules package-lock.json
-                npm install
+                ls -la
+
+                if [ -f package.json ]; then
+                    rm -rf node_modules package-lock.json
+                    npm install
+                else
+                    echo "package.json not found!"
+                    exit 1
+                fi
                 '''
             }
         }
 
         stage('Trivy FS Scan') {
             steps {
-                sh 'trivy fs . > trivyfs.txt || true'
+                sh 'trivy fs . > trivyfs.txt'
             }
         }
 
         stage('Docker Build & Push') {
             steps {
                 script {
-                    withCredentials([usernamePassword(credentialsId: 'docker', usernameVariable: 'USER', passwordVariable: 'PASS')]) {
-                        sh '''
-                        echo "Logging into DockerHub..."
-                        echo $PASS | docker login -u $USER --password-stdin
-
+                    withDockerRegistry(credentialsId: 'docker', toolName: 'docker') {
+                        sh """
                         echo "Building Docker image..."
-                        docker build -t $DOCKER_IMAGE -f bookmyshow-app/Dockerfile bookmyshow-app
+                        docker build --no-cache -t $DOCKER_IMAGE -f bookmyshow-app/Dockerfile bookmyshow-app
 
                         echo "Pushing Docker image..."
                         docker push $DOCKER_IMAGE
-                        '''
+                        """
                     }
                 }
             }
@@ -92,48 +102,22 @@ pipeline {
         stage('Deploy to EKS Cluster') {
             steps {
                 script {
-                    withCredentials([
-                        string(credentialsId: 'aws-access-key', variable: 'AWS_ACCESS_KEY'),
-                        string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_KEY')
-                    ]) {
+                    sh """
+                    echo "Checking AWS identity..."
+                    aws sts get-caller-identity
 
-                        sh '''
-                        aws configure set aws_access_key_id $AWS_ACCESS_KEY
-                        aws configure set aws_secret_access_key $AWS_SECRET_KEY
-                        aws configure set region $AWS_REGION
+                    echo "Configuring kubectl for EKS..."
+                    aws eks update-kubeconfig --name $EKS_CLUSTER_NAME --region $AWS_REGION
 
-                        aws sts get-caller-identity
+                    echo "Deploying Kubernetes manifests..."
+                    kubectl apply -f deployment.yml
+                    kubectl apply -f service.yml
 
-                        aws eks update-kubeconfig --name $EKS_CLUSTER_NAME --region $AWS_REGION
-
-                        kubectl apply -f deployment.yml
-                        kubectl apply -f service.yml
-
-                        kubectl get pods
-                        kubectl get svc
-                        '''
-                    }
+                    echo "Cluster status:"
+                    kubectl get pods
+                    kubectl get svc
+                    """
                 }
-            }
-        }
-
-        stage('Deploy to Container') {
-            steps {
-                sh '''
-                echo "Stopping and removing old container..."
-                docker stop bms || true
-                docker rm bms || true
-
-                echo "Running new container on port 3000..."
-                docker run -d --restart=always --name bms -p 3000:3000 bindusravya/bms:latest
-
-                echo "Checking running containers..."
-                docker ps -a
-
-                echo "Fetching logs..."
-                sleep 5
-                docker logs bms
-                '''
             }
         }
     }
@@ -141,14 +125,14 @@ pipeline {
     post {
         always {
             emailext attachLog: true,
-                subject: "${currentBuild.result}",
+                subject: "${currentBuild.result} - ${env.JOB_NAME}",
                 body: """
                 Project: ${env.JOB_NAME}<br/>
-                Build: ${env.BUILD_NUMBER}<br/>
-                URL: ${env.BUILD_URL}
+                Build Number: ${env.BUILD_NUMBER}<br/>
+                URL: ${env.BUILD_URL}<br/>
                 """,
                 to: 'kastrokiran@gmail.com',
-                attachmentsPattern: 'trivyfs.txt'
+                attachmentsPattern: 'trivyfs.txt,trivyimage.txt'
         }
     }
 }
