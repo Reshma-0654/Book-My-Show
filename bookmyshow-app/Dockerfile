@@ -1,21 +1,27 @@
-# Stage 1 - Build React App
-FROM node:18 AS build
+# Use Node.js LTS image
+FROM node:18
 
+# Set working directory
 WORKDIR /app
 
+# Copy package files
 COPY package*.json ./
 
+# Install dependencies
 RUN npm install --legacy-peer-deps
 
+# Copy application source code
 COPY . .
 
-RUN npm run build
+# React/Webpack OpenSSL fix
+ENV NODE_OPTIONS=--openssl-legacy-provider
 
-# Stage 2 - Serve with Nginx
-FROM nginx:alpine
+# Make app accessible outside container
+ENV HOST=0.0.0.0
+ENV PORT=3000
 
-COPY --from=build /app/build /usr/share/nginx/html
+# Expose application port
+EXPOSE 3000
 
-EXPOSE 80
-
-CMD ["nginx", "-g", "daemon off;"]
+# Start React application
+CMD ["npm", "start"]
