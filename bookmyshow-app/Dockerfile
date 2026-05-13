@@ -1,26 +1,27 @@
-# Base image
+# Use Node.js LTS image
 FROM node:18
 
-# Set working directory
+# Create app directory
 WORKDIR /app
 
-# Copy dependency files first (for caching)
-COPY package.json package-lock.json ./
+# Copy package files
+COPY package*.json ./
 
-# Install dependencies cleanly
+# Install dependencies
 RUN npm install --legacy-peer-deps
 
-# Copy full application code
+# Copy project files
 COPY . .
 
-# Fix OpenSSL issue (Webpack / React builds)
+# React/OpenSSL fix
 ENV NODE_OPTIONS=--openssl-legacy-provider
 
-# App port
+# Make React accessible outside container
+ENV HOST=0.0.0.0
 ENV PORT=3000
 
-# Expose application port
+# Expose port
 EXPOSE 3000
 
-# Start application
+# Start app
 CMD ["npm", "start"]
