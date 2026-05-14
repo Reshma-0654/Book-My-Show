@@ -9,8 +9,6 @@ pipeline {
     environment {
         SCANNER_HOME = tool 'sonar-scanner'
         DOCKER_IMAGE = 'reshma6540/bookmyshow:latest'
-        EKS_CLUSTER_NAME = 'kastro-eks'
-        AWS_REGION = 'us-east-1'
     }
 
     stages {
@@ -77,7 +75,9 @@ pipeline {
 
         stage('Trivy FS Scan') {
             steps {
-                sh 'trivy fs . > trivyfs.txt'
+                sh '''
+                trivy fs . > trivyfs.txt
+                '''
             }
         }
 
@@ -85,7 +85,12 @@ pipeline {
             steps {
                 script {
                     withDockerRegistry(credentialsId: 'docker', toolName: 'docker') {
+
                         sh """
+                        echo "Current Directory:"
+                        pwd
+                        ls -la
+
                         echo "Building Docker image..."
                         docker build --no-cache -t $DOCKER_IMAGE -f bookmyshow-app/Dockerfile bookmyshow-app
 
@@ -96,28 +101,6 @@ pipeline {
                 }
             }
         }
-
-        stage('Deploy to EKS Cluster') {
-            steps {
-                script {
-                    sh """
-                    echo "Checking AWS identity..."
-                    aws sts get-caller-identity
-
-                    echo "Configuring kubectl for EKS..."
-                    aws eks update-kubeconfig --name $EKS_CLUSTER_NAME --region $AWS_REGION
-
-                    echo "Deploying Kubernetes manifests..."
-                    kubectl apply -f deployment.yml
-                    kubectl apply -f service.yml
-
-                    echo "Cluster status:"
-                    kubectl get pods
-                    kubectl get svc
-                    """
-                }
-            }
-        }
     }
 
     post {
@@ -125,12 +108,14 @@ pipeline {
             emailext attachLog: true,
                 subject: "${currentBuild.result} - ${env.JOB_NAME}",
                 body: """
-                Project: ${env.JOB_NAME}<br/>
-                Build Number: ${env.BUILD_NUMBER}<br/>
-                URL: ${env.BUILD_URL}<br/>
+                <h2>Jenkins Build Notification</h2>
+                <p><b>Project:</b> ${env.JOB_NAME}</p>
+                <p><b>Build Number:</b> ${env.BUILD_NUMBER}</p>
+                <p><b>Build Status:</b> ${currentBuild.result}</p>
+                <p><b>Build URL:</b> ${env.BUILD_URL}</p>
                 """,
                 to: 'kastrokiran@gmail.com',
-                attachmentsPattern: 'trivyfs.txt,trivyimage.txt'
+                attachmentsPattern: 'trivyfs.txt'
         }
     }
 }
